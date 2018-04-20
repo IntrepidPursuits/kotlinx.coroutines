@@ -16,7 +16,6 @@
 
 package kotlinx.coroutines.experimental.test
 
-import kotlinx.atomicfu.*
 import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.internal.*
 import java.util.concurrent.TimeUnit
@@ -39,10 +38,10 @@ import kotlin.coroutines.experimental.*
  * @param name A user-readable name for debugging purposes.
  */
 class TestCoroutineContext(private val name: String? = null) : CoroutineContext {
-    private val uncaughtExceptions = mutableListOf<Throwable>()
+    internal val uncaughtExceptions = mutableListOf<Throwable>()
 
     private val ctxDispatcher = Dispatcher()
-    
+
     private val ctxHandler = CoroutineExceptionHandler { _, exception ->
         uncaughtExceptions += exception
     }
@@ -51,10 +50,10 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
     private val queue = ThreadSafeHeap<TimedRunnable>()
 
     // The per-scheduler global order counter.
-    private val counter = atomic(0L)
+    private var counter = 0L
 
     // Storing time in nanoseconds internally.
-    private val time = atomic(0L)
+    private var time = 0L
 
     /**
      * Exceptions that were caught during a [launch] or a [async] + [Deferred.await].
@@ -78,7 +77,7 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
         key === CoroutineExceptionHandler -> ctxDispatcher
         else -> this
     }
-    
+
     /**
      * Returns the current virtual clock-time as it is known to this CoroutineContext.
      *
@@ -86,7 +85,7 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
      * @return The virtual clock-time
      */
     public fun now(unit: TimeUnit = TimeUnit.MILLISECONDS)=
-        unit.convert(time.value, TimeUnit.NANOSECONDS)
+        unit.convert(time, TimeUnit.NANOSECONDS)
 
     /**
      * Moves the CoroutineContext's virtual clock forward by a specified amount of time.
@@ -99,9 +98,9 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
      * @return The amount of delay-time that this CoroutinesContext's clock has been forwarded.
      */
     public fun advanceTimeBy(delayTime: Long, unit: TimeUnit = TimeUnit.MILLISECONDS): Long {
-        val oldTime = time.value
+        val oldTime = time
         advanceTimeTo(oldTime + unit.toNanos(delayTime), TimeUnit.NANOSECONDS)
-        return unit.convert(time.value - oldTime, TimeUnit.NANOSECONDS)
+        return unit.convert(time - oldTime, TimeUnit.NANOSECONDS)
     }
 
     /**
@@ -113,14 +112,14 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
     fun advanceTimeTo(targetTime: Long, unit: TimeUnit = TimeUnit.MILLISECONDS) {
         val nanoTime = unit.toNanos(targetTime)
         triggerActions(nanoTime)
-        if (nanoTime > time.value) time.value = nanoTime
+        if (nanoTime > time) time = nanoTime
     }
 
     /**
      * Triggers any actions that have not yet been triggered and that are scheduled to be triggered at or
      * before this CoroutineContext's present virtual clock-time.
      */
-    public fun triggerActions() = triggerActions(time.value)
+    public fun triggerActions() = triggerActions(time)
 
     /**
      * Cancels all not yet triggered actions. Be careful calling this, since it can seriously
@@ -130,10 +129,10 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
     public fun cancelAllActions() = queue.clear()
 
     private fun post(block: Runnable) =
-        queue.addLast(TimedRunnable(block, counter.getAndIncrement()))
+        queue.addLast(TimedRunnable(block, counter++))
 
     private fun postDelayed(block: Runnable, delayTime: Long) =
-        TimedRunnable(block, counter.getAndIncrement(), time.value + TimeUnit.MILLISECONDS.toNanos(delayTime))
+        TimedRunnable(block, counter++, time + TimeUnit.MILLISECONDS.toNanos(delayTime))
             .also {
                 queue.addLast(it)
             }
@@ -151,7 +150,7 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
         while (true) {
             val current = queue.removeFirstIf { it.time <= targetTime } ?: break
             // If the scheduled time is 0 (immediate) use current virtual time
-            if (current.time != 0L) time.value = current.time
+            if (current.time != 0L) time = current.time
             current.run()
         }
     }
@@ -199,3 +198,48 @@ private class TimedRunnable(
 
     override fun toString() = "TimedRunnable(time=$time, run=$run)"
 }
+
+/**
+ *
+ */
+public fun withTestContext(testContext: TestCoroutineContext = TestCoroutineContext(), body: TestCoroutineContext.() -> Unit) {
+    testContext.body()
+
+    if (!testContext.uncaughtExceptions.isEmpty()) {
+        throw AssertionError("Coroutine encountered unhandled exceptions:\n${testContext.uncaughtExceptions}")
+    }
+}
+
+public fun TestCoroutineContext.assertUnhandledException(message: String = "", predicate: (Throwable) -> Boolean) {
+    if (uncaughtExceptions.size != 1 || !predicate(uncaughtExceptions[0])) throw AssertionError(message)
+    uncaughtExceptions.clear()
+}
+
+public fun TestCoroutineContext.assertAllUnhandledExceptions(message: String = "", predicate: (Throwable) -> Boolean) {
+    if (!uncaughtExceptions.all(predicate)) throw AssertionError(message)
+    uncaughtExceptions.clear()
+}
+
+public fun TestCoroutineContext.assertAnyUnhandledException(message: String = "", predicate: (Throwable) -> Boolean) {
+    if (!uncaughtExceptions.any(predicate)) throw AssertionError(message)
+    uncaughtExceptions.clear()
+}
+
+public fun TestCoroutineContext.launch(
+        start: CoroutineStart = CoroutineStart.DEFAULT,
+        parent: Job? = null,
+        onCompletion: CompletionHandler? = null,
+        block: suspend CoroutineScope.() -> Unit
+) = launch(this, start, parent, onCompletion, block)
+
+public fun <T> TestCoroutineContext.async(
+        start: CoroutineStart = CoroutineStart.DEFAULT,
+        parent: Job? = null,
+        onCompletion: CompletionHandler? = null,
+        block: suspend CoroutineScope.() -> T
+
+) = async(this, start, parent, onCompletion, block)
+
+public fun <T> TestCoroutineContext.runBlocking(
+        block: suspend CoroutineScope.() -> T
+) = runBlocking(this, block)
