@@ -38,7 +38,7 @@ import kotlin.coroutines.experimental.*
  * @param name A user-readable name for debugging purposes.
  */
 class TestCoroutineContext(private val name: String? = null) : CoroutineContext {
-    internal val uncaughtExceptions = mutableListOf<Throwable>()
+    private val uncaughtExceptions = mutableListOf<Throwable>()
 
     private val ctxDispatcher = Dispatcher()
 
@@ -126,7 +126,66 @@ class TestCoroutineContext(private val name: String? = null) : CoroutineContext 
      * mess with your coroutines work. This method should usually be called on tear-down of a
      * unit test.
      */
-    public fun cancelAllActions() = queue.clear()
+    public fun cancelAllActions() {
+        // An 'is-empty' test is required to avoid a NullPointerException in the 'clear()' method
+        if (!queue.isEmpty) queue.clear()
+    }
+
+    /**
+     * This method does nothing if there is one unhandled exception that satisfies the given predicate.
+     * Otherwise it throws an [AssertionError] with the given message.
+     *
+     * (this method will clear the list of unhandled exceptions)
+     *
+     * @param message Message of the [AssertionError]. Defaults to an empty String.
+     * @param predicate The predicate that must be satisfied.
+     */
+    public fun assertUnhandledException(message: String = "", predicate: (Throwable) -> Boolean) {
+        if (uncaughtExceptions.size != 1 || !predicate(uncaughtExceptions[0])) throw AssertionError(message)
+        uncaughtExceptions.clear()
+    }
+
+    /**
+     * This method does nothing if there are no unhandled exceptions or all of them satisfy the given predicate.
+     * Otherwise it throws an [AssertionError] with the given message.
+     *
+     * (this method will clear the list of unhandled exceptions)
+     *
+     * @param message Message of the [AssertionError]. Defaults to an empty String.
+     * @param predicate The predicate that must be satisfied.
+     */
+    public fun assertAllUnhandledExceptions(message: String = "", predicate: (Throwable) -> Boolean) {
+        if (!uncaughtExceptions.all(predicate)) throw AssertionError(message)
+        uncaughtExceptions.clear()
+    }
+
+    /**
+     * This method does nothing if one or more unhandled exceptions satisfy the given predicate.
+     * Otherwise it throws an [AssertionError] with the given message.
+     *
+     * (this method will clear the list of unhandled exceptions)
+     *
+     * @param message Message of the [AssertionError]. Defaults to an empty String.
+     * @param predicate The predicate that must be satisfied.
+     */
+    public fun assertAnyUnhandledException(message: String = "", predicate: (Throwable) -> Boolean) {
+        if (!uncaughtExceptions.any(predicate)) throw AssertionError(message)
+        uncaughtExceptions.clear()
+    }
+
+    /**
+     * This method does nothing if the list of unhandled exceptions satisfy the given predicate.
+     * Otherwise it throws an [AssertionError] with the given message.
+     *
+     * (this method will clear the list of unhandled exceptions)
+     *
+     * @param message Message of the [AssertionError]. Defaults to an empty String.
+     * @param predicate The predicate that must be satisfied.
+     */
+    public fun assertExceptions(message: String = "", predicate: (List<Throwable>) -> Boolean) {
+        if (!predicate(uncaughtExceptions)) throw AssertionError(message)
+        uncaughtExceptions.clear()
+    }
 
     private fun post(block: Runnable) =
         queue.addLast(TimedRunnable(block, counter++))
@@ -200,31 +259,32 @@ private class TimedRunnable(
 }
 
 /**
+ * Executes a block of code in which a unit-test can be written using the provided [TestCoroutineContext]. The provided
+ * [TestCoroutineContext] is available in the [testBody] as the `this` receiver.
  *
+ * The [testBody] is executed and an [AssertionError] is thrown if the list of unhandled exceptions is not empty and
+ * contains any exception that is not a [CancellationException].
+ *
+ * If the [testBody] successfully executes one of the [TestCoroutineContext.assertAllUnhandledExceptions],
+ * [TestCoroutineContext.assertAnyUnhandledException], [TestCoroutineContext.assertUnhandledException] or
+ * [TestCoroutineContext.assertExceptions], the list of unhandled exceptions will have been cleared and this method will
+ * not throw an [AssertionError].
+ *
+ * @param testContext The provided [TestCoroutineContext]. If not specified, a default [TestCoroutineContext] will be
+ * provided instead.
+ * @param testBody The code of the unit-test.
  */
-public fun withTestContext(testContext: TestCoroutineContext = TestCoroutineContext(), body: TestCoroutineContext.() -> Unit) {
-    testContext.body()
+public fun withTestContext(testContext: TestCoroutineContext = TestCoroutineContext(), testBody: TestCoroutineContext.() -> Unit) {
+    with (testContext) {
+        testBody()
 
-    if (!testContext.uncaughtExceptions.isEmpty()) {
-        throw AssertionError("Coroutine encountered unhandled exceptions:\n${testContext.uncaughtExceptions}")
+        if (!exceptions.all { it is CancellationException }) {
+            throw AssertionError("Coroutine encountered unhandled exceptions:\n${exceptions}")
+        }
     }
 }
 
-public fun TestCoroutineContext.assertUnhandledException(message: String = "", predicate: (Throwable) -> Boolean) {
-    if (uncaughtExceptions.size != 1 || !predicate(uncaughtExceptions[0])) throw AssertionError(message)
-    uncaughtExceptions.clear()
-}
-
-public fun TestCoroutineContext.assertAllUnhandledExceptions(message: String = "", predicate: (Throwable) -> Boolean) {
-    if (!uncaughtExceptions.all(predicate)) throw AssertionError(message)
-    uncaughtExceptions.clear()
-}
-
-public fun TestCoroutineContext.assertAnyUnhandledException(message: String = "", predicate: (Throwable) -> Boolean) {
-    if (!uncaughtExceptions.any(predicate)) throw AssertionError(message)
-    uncaughtExceptions.clear()
-}
-
+/* Some helper functions */
 public fun TestCoroutineContext.launch(
         start: CoroutineStart = CoroutineStart.DEFAULT,
         parent: Job? = null,
