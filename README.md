@@ -92,6 +92,14 @@ buildscript {
 }
 ```
 
+Make sure that you have either `jcenter()` or `mavenCentral()` in the list of repositories:
+
+```
+repository {
+    jcenter()
+}
+```
+
 ### Kotlin/JS
 
 Use `org.jetbrains.kotlinx:kotlinx-coroutines-core-js:<version>` artifact in your Gradle/Maven dependencies 
@@ -109,11 +117,22 @@ To avoid field overloading by type during obfuscation, add this to your config:
 }
 ```
 
+## Building 
+
+This library is built with Gradle. To build it, use `./gradlew build`. 
+You can import this project into IDEA, but you have to delegate build actions
+to Gradle (in Preferences -> Build, Execution, Deployment -> Build Tools -> Gradle -> Runner)
+
+### Requirements
+
+* JDK >= 1.8 referred to by the `JAVA_HOME` environment variable.
+* JDK 1.6 referred to by the `JDK_16` environment variable.
+
 ## Contributions and releases
 
 All development (both new features and bug fixes) is performed in `develop` branch. 
 This way `master` sources always contain sources of the most recently released version.
-Please send PRs with bug fixes to `develop` branch
+Please send PRs with bug fixes to `develop` branch.
 Fixes to documentation in markdown files are an exception to this rule. They are updated directly in `master`.
                                                                           
 The `develop` branch is pushed to `master` during release.
